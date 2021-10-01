@@ -87,7 +87,7 @@ public class UFC_NB extends UFC {
             if(cred.decrementIfEnoughCredits(msg, length, 0)) // timeout is ignored
                 return down_prot.down(msg);
             if(cred.needToSendCreditRequest(max_block_time))
-                sendCreditRequest(dest, Math.max(0, max_credits - cred.get()));
+                sendCreditRequest(dest);
             return null; // msg was queued
         }
         return down_prot.down(msg);
@@ -103,7 +103,7 @@ public class UFC_NB extends UFC {
         sent.forEach((dest, c) -> {
             NonBlockingCredit cred=(NonBlockingCredit)c;
             if(cred.get() < min_credits && cred.isQueuing() && cred.needToSendCreditRequest(max_block_time)) {
-                sendCreditRequest(dest, Math.max(0, max_credits - cred.get()));
+                sendCreditRequest(dest);
             }
         });
     }

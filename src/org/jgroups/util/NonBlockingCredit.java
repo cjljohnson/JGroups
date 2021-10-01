@@ -69,13 +69,14 @@ public class NonBlockingCredit extends Credit {
         }
     }
 
-    public void increment(long credits, long max_credits) {
+    public long increment(long credits, long max_credits) {
         List<Message> drain_list;
+        long credits_added = 0;
         lock.lock();
         try {
-            super.increment(credits, max_credits);
+            credits_added = super.increment(credits, max_credits);
             if(!queuing || msg_queue.isEmpty())
-                return;
+                return credits_added;
             int drained=msg_queue.drainTo(drain_list=new ArrayList<>(msg_queue.getElements()), (int)this.credits_left);
             if(drained > 0)
                 credits_left=Math.min(max_credits, credits_left - drained);
@@ -89,6 +90,8 @@ public class NonBlockingCredit extends Credit {
         // finally send drained messages:
         if(!drain_list.isEmpty())
             drain_list.forEach(send_function);
+
+        return credits_added;
     }
 
     public Credit reset() {

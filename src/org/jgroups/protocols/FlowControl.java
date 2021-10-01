@@ -286,9 +286,7 @@ public abstract class FlowControl extends Protocol {
             case FcHeader.CREDIT_REQUEST:
                 num_credit_requests_received++;
                 Address sender=msg.getSrc();
-                long requested_credits=((LongMessage)msg).getValue();
-                if(requested_credits > 0)
-                    handleCreditRequest(received, sender, requested_credits);
+                handleCreditRequest(received, sender);
                 break;
             default:
                 log.error(Util.getMessage("HeaderTypeNotKnown"), local_addr, hdr.type);
@@ -370,17 +368,16 @@ public abstract class FlowControl extends Protocol {
     /**
      * @param map The map to modify
      * @param sender The sender who requests credits
-     * @param requested_credits Number of bytes that the sender has left to send messages to us
      */
-    protected void handleCreditRequest(Map<Address,Credit> map, Address sender, long requested_credits) {
-        if(requested_credits > 0 && sender != null) {
+    protected void handleCreditRequest(Map<Address,Credit> map, Address sender) {
+        if(sender != null) {
             Credit cred=map.get(sender);
             if(cred == null)
                 return;
+            long credits_added=cred.replenish(max_credits);
             if(log.isTraceEnabled())
-                log.trace("received credit request from %s: sending %d credits", sender, requested_credits);
-            cred.increment(requested_credits, max_credits);
-            sendCredit(sender, requested_credits);
+                log.trace("received credit request from %s: sending %d credits", sender, credits_added);
+            sendCredit(sender, credits_added);
         }
     }
 
@@ -398,12 +395,11 @@ public abstract class FlowControl extends Protocol {
      * We cannot send this request as OOB message, as the credit request needs to queue up behind the regular messages;
      * if a receiver cannot process the regular messages, that is a sign that the sender should be throttled !
      * @param dest The member to which we send the credit request
-     * @param credits_needed The number of bytes (of credits) left for dest
      */
-    protected void sendCreditRequest(final Address dest, long credits_needed) {
+    protected void sendCreditRequest(final Address dest) {
         if(log.isTraceEnabled())
-            log.trace("sending request for %d credits to %s", credits_needed, dest);
-        Message msg=new LongMessage(dest, credits_needed).putHeader(this.id, getCreditRequestHeader())
+            log.trace("sending request for available credits to %s", dest);
+        Message msg=new EmptyMessage(dest).putHeader(this.id, getCreditRequestHeader())
           .setFlag(Message.Flag.OOB, Message.Flag.INTERNAL, Message.Flag.DONT_BUNDLE);
         down_prot.down(msg);
         num_credit_requests_sent++;

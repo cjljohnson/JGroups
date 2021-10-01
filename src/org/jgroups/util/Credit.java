@@ -94,11 +94,26 @@ public class Credit {
         }
     }
 
-    public void increment(long credits, final long max_credits) {
+    public long increment(long credits, final long max_credits) {
         lock.lock();
         try {
-            credits_left=Math.min(max_credits, credits_left + credits);
+            long credits_added = Math.min(credits, max_credits - credits_left);
+            credits_left=credits_left + credits_added;
             credits_available.signalAll();
+            return credits_added;
+        }
+        finally {
+            lock.unlock();
+        }
+    }
+
+    public long replenish(final long max_credits) {
+        lock.lock();
+        try {
+            long credits_added=max_credits - credits_left;
+            credits_left += credits_added;
+            credits_available.signalAll();
+            return credits_added;
         }
         finally {
             lock.unlock();

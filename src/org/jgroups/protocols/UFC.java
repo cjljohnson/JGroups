@@ -119,7 +119,7 @@ public class UFC extends FlowControl {
                 break;
 
             if(cred.needToSendCreditRequest(max_block_time))
-                sendCreditRequest(dest, Math.max(0, max_credits - cred.get()));
+                sendCreditRequest(dest);
         }
 
         // send message - either after regular processing, or after blocking (when enough credits available again)

@@ -123,7 +123,7 @@ public class MFC extends FlowControl {
             if(needToSendCreditRequest()) {
                 List<Tuple<Address,Long>> targets=credits.getMembersWithCreditsLessThan(min_credits);
                 for(Tuple<Address,Long> tuple: targets)
-                    sendCreditRequest(tuple.getVal1(), Math.min(max_credits, max_credits - tuple.getVal2()));
+                    sendCreditRequest(tuple.getVal1());
             }
         }
         
