@@ -14,10 +14,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.nio.file.StandardOpenOption;
-import java.util.ArrayList;
-import java.util.Date;
-import java.util.List;
-import java.util.Map;
+import java.util.*;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -42,6 +39,7 @@ public class MPerf implements Receiver {
     protected int                             num_threads=100;
     protected int                             num_senders=-1; // <= 0: all
     protected boolean                         oob;
+    protected boolean                         log_local;
     protected long                            start_time; // set on reception of START message
     protected final LongAdder                 total_received_msgs=new LongAdder();
     protected final List<Address>             members=new CopyOnWriteArrayList<>();
@@ -51,6 +49,10 @@ public class MPerf implements Receiver {
     protected final ResponseCollector<Result> results=new ResponseCollector<>();
     protected ThreadFactory                   thread_factory;
     protected static final short              ID=ClassConfigurator.getProtocolId(MPerf.class);
+
+    public MPerf() throws IOException {
+        this(null);
+    }
 
     public MPerf(Path out_file_path) throws IOException {
 
@@ -94,13 +96,13 @@ public class MPerf implements Receiver {
     protected void eventLoop() {
         final String INPUT=
           "[1] Start test [2] View [4] Threads (%d) [6] Time (%,ds) [7] Msg size (%s)\n" +
-            "[8] Number of senders (%s) [o] Toggle OOB (%s)\n" +
+            "[8] Number of senders (%s) [o] Toggle OOB (%s) [l] Toggle measure local messages (%s)\n" +
             "[x] Exit this [X] Exit all";
 
         while(looping) {
             try {
                 int c=Util.keyPress(String.format(INPUT, num_threads, time, Util.printBytes(msg_size),
-                                              num_senders <= 0? "all" : String.valueOf(num_senders), oob));
+                                              num_senders <= 0? "all" : String.valueOf(num_senders), oob, log_local));
                 switch(c) {
                     case '1':
                         startTest();
@@ -123,6 +125,10 @@ public class MPerf implements Receiver {
                     case 'o':
                         ConfigChange change=new ConfigChange("oob", !oob);
                         send(null, change, MPerfHeader.CONFIG_CHANGE, Message.Flag.RSVP);
+                        break;
+                    case 'l':
+                        ConfigChange log_local_change=new ConfigChange("log_local", !log_local);
+                        send(null, log_local_change, MPerfHeader.CONFIG_CHANGE, Message.Flag.RSVP);
                         break;
                     case 'x':
                     case -1:
@@ -189,6 +195,7 @@ public class MPerf implements Receiver {
         sb.append("num_threads=").append(num_threads).append('\n');
         sb.append("num_senders=").append(num_senders).append('\n');
         sb.append("oob=").append(oob).append('\n');
+        sb.append("log_local=").append(log_local).append('\n');
         return sb.toString();
     }
 
@@ -244,18 +251,21 @@ public class MPerf implements Receiver {
         MPerfHeader hdr=msg.getHeader(ID);
         switch(hdr.type) {
             case MPerfHeader.DATA:
-                total_received_msgs.increment();
+                if (log_local || !Objects.equals(msg.getSrc(), local_addr)) {
+                    total_received_msgs.increment();
+                }
                 break;
 
             case MPerfHeader.START_SENDING:
+                boolean isSender = true;
                 if(num_senders > 0) {
                     int my_rank=Util.getRank(members, local_addr);
                     if(my_rank >= 0 && my_rank > num_senders)
-                        break;
+                        isSender = false;
                 }
                 start_time=System.currentTimeMillis();
                 Result r=null;
-                r=sendMessages();
+                r=sendMessages(isSender);
                 System.out.println("-- done");
                 sendNoException(msg.getSrc(), r, MPerfHeader.RESULT, Message.Flag.OOB);
                 break;
@@ -295,21 +305,24 @@ public class MPerf implements Receiver {
     public void receive(MessageBatch batch) {
         for(Message msg: batch) {
             byte type=((MPerfHeader)msg.getHeader(ID)).type;
-            if(type == MPerfHeader.DATA)
-                total_received_msgs.increment();
-            else
+            if(type == MPerfHeader.DATA) {
+                if (log_local || !Objects.equals(msg.getSrc(), local_addr)) {
+                    total_received_msgs.increment();
+                }
+            } else {
                 receive(msg);
+            }
         }
     }
 
     /** Returns all members if num_senders <= 0, or the members with rank <= num_senders */
     protected List<Address> getSenders() {
-        if(num_senders <= 0)
+//        if(num_senders <= 0)
             return new ArrayList<>(members);
-        List<Address> retval=new ArrayList<>();
-        for(int i=0; i < num_senders; i++)
-            retval.add(members.get(i));
-        return retval;
+//        List<Address> retval=new ArrayList<>();
+//        for(int i=0; i < num_senders; i++)
+//            retval.add(members.get(i));
+//        return retval;
     }
 
 
@@ -333,6 +346,7 @@ public class MPerf implements Receiver {
         cfg.addChange("num_threads", num_threads);
         cfg.addChange("num_senders", num_senders);
         cfg.addChange("oob",         oob);
+        cfg.addChange("log_local",   log_local);
         send(sender,cfg,MPerfHeader.CONFIG_RSP);
     }
 
@@ -350,20 +364,22 @@ public class MPerf implements Receiver {
     }
 
     
-    protected Result sendMessages() {
+    protected Result sendMessages(boolean isSender) {
         final Thread[]       senders=new Thread[num_threads];
         final CountDownLatch latch=new CountDownLatch(1);
         final byte[]         payload=new byte[msg_size];
+        final AtomicBoolean running = new AtomicBoolean(true);
 
         total_received_msgs.reset();
-        final AtomicBoolean running=new AtomicBoolean(true);
-        for(int i=0; i < num_threads; i++) {
-            Sender sender=new Sender(latch, running, payload);
-            senders[i]=thread_factory.newThread(sender, "sender-" + i);
-            senders[i].start();
-        }
-        System.out.printf("-- running test for %d seconds with %d sender threads\n", time, num_threads);
 
+        if (isSender) {
+            for (int i = 0; i < num_threads; i++) {
+                Sender sender = new Sender(latch, running, payload);
+                senders[i] = thread_factory.newThread(sender, "sender-" + i);
+                senders[i].start();
+            }
+        }
+        System.out.printf("-- running test for %d seconds with %d sender threads\n", time, isSender ? num_threads : 0);
         long interval=(long)((time * 1000.0) / 10.0);
         long start=System.currentTimeMillis();
         latch.countDown();
@@ -371,13 +387,15 @@ public class MPerf implements Receiver {
             Util.sleep(interval);
             System.out.printf("%d: %s\n", i, printAverage(start));
         }
-        running.set(false);
-        for(Thread s: senders) {
-            try {
-                s.join();
-            }
-            catch(InterruptedException e) {
-                e.printStackTrace();
+
+        if (isSender) {
+            running.set(false);
+            for (Thread s : senders) {
+                try {
+                    s.join();
+                } catch (InterruptedException e) {
+                    e.printStackTrace();
+                }
             }
         }
         Result result=new Result(System.currentTimeMillis() - start, total_received_msgs.sum());
