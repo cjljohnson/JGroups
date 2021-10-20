@@ -169,9 +169,13 @@ public class MPerf implements Receiver {
         Map<Address,Result> tmp_results=results.getResults();
         for(Map.Entry<Address,Result> entry: tmp_results.entrySet()) {
             Result val=entry.getValue();
-            if(val != null)
-                System.out.println(entry.getKey() + ": " + computeStats(val.time, val.msgs, msg_size) +
-                        printPerSender(val.sources, val.received, msg_size, val.time));
+            if(val != null) {
+                String resultString = entry.getKey() + ": " + computeStats(val.time, val.msgs, msg_size);
+                if (display_msg_src) {
+                    resultString += printPerSender(val.sources, val.received, msg_size, val.time);
+                }
+                System.out.println(resultString);
+            }
         }
 
         long total_msgs=0, total_time=0, num=0;
