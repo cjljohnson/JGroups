@@ -1606,6 +1606,18 @@ public abstract class TP extends Protocol implements DiagnosticsHandler.ProbeHan
         }
     }
 
+    public void submitMessage(Message msg) {
+        boolean oob=msg.isFlagSet(Message.Flag.OOB), internal=msg.isFlagSet(Message.Flag.INTERNAL);
+        msg_processing_policy.process(msg, oob, internal);
+    }
+
+    public void submitBatch(MessageBatch batch) {
+        if (batch == null || batch.isEmpty())
+            return;
+        boolean oob=batch.getMode()==MessageBatch.Mode.OOB, internal=batch.first().isFlagSet(Message.Flag.INTERNAL);
+        msg_processing_policy.process(batch, oob, internal);
+    }
+
     protected void processBatch(MessageBatch batch, boolean oob, boolean internal) {
         try {
             if(batch != null && !batch.isEmpty() && !unicastDestMismatch(batch.getDest()))
