@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Objects;
 import java.util.function.Supplier;
 
 /**
@@ -90,15 +91,10 @@ public class DAISYCHAIN extends Protocol {
             transport.loopback(msg, true);
         }
 
-        // Set source to protect against bundling
-//        if(msg.getSrc() == null && local_addr != null)
-//            msg.setSrc(local_addr);
-
-        short hdr_ttl=(short)(view.size()-1);
         // we need to copy the message, as we cannot do a msg.setSrc(next): the next retransmission
         // would use 'next' as destination  !
         Message copy=msg.copy(true, true).setDest(next).setSrc(null)
-          .putHeader(getId(), new DaisyHeader(hdr_ttl, msg.src()));
+          .putHeader(getId(), new DaisyHeader(msg.src()));
         msgs_sent++;
         if(log.isTraceEnabled())
             log.trace("%s: forwarding multicast message %s (hdrs: %s) to %s", local_addr, msg, msg.getHeaders(), next);
@@ -111,16 +107,16 @@ public class DAISYCHAIN extends Protocol {
         if(hdr == null)
             return up_prot.up(msg);
 
-        // 1. forward the message to the next in line if ttl > 0
-        short ttl=hdr.getTTL();
+        // 1. forward the message to the next in line if src != next and srx still in view
         if(log.isTraceEnabled())
-            log.trace("%s: received message from %s with ttl=%d", local_addr, hdr.getSrc(), ttl);
-        if(--ttl > 0) {
+            log.trace("%s: received message from %s", local_addr, hdr.getSrc());
+        if(!Objects.equals(hdr.getSrc(), next) &&
+                (view == null || view.containsMember(hdr.getSrc()))) {
             Message copy=msg.copy(true, true)
-              .setDest(next).setSrc(null).putHeader(getId(), new DaisyHeader(ttl, hdr.getSrc()));
+              .setDest(next).setSrc(null).putHeader(getId(), hdr);
             msgs_forwarded++;
             if(log.isTraceEnabled())
-                log.trace("%s: forwarding message to %s with ttl=%d", local_addr, next, ttl);
+                log.trace("%s: forwarding message to %s with src=%s", local_addr, next, hdr.getSrc());
             down_prot.down(copy);
         }
         //System.out.println(String.format("up: %s -> %s", msg.getSrc(), msg.getDest()));
@@ -134,19 +130,20 @@ public class DAISYCHAIN extends Protocol {
     public void upBatch(MessageBatch batch) {
         for(Message msg: batch) {
             DaisyHeader hdr=msg.getHeader(getId());
-            if(hdr != null) {
-                // 1. forward the message to the next in line if ttl > 0
-                short ttl=hdr.getTTL();
+            if(hdr == null) {
+                continue;
+            }
+            // 1. forward the message to the next in line if src != next and srx still in view
+            if(log.isTraceEnabled())
+                log.trace("%s: received message from %s", local_addr, hdr.getSrc());
+            if(!Objects.equals(hdr.getSrc(), next) &&
+                    (view == null || view.containsMember(hdr.getSrc()))) {
+                Message copy=msg.copy(true, true)
+                        .setDest(next).setSrc(null).putHeader(getId(), hdr);
+                msgs_forwarded++;
                 if(log.isTraceEnabled())
-                    log.trace("%s: received message from %s with ttl=%d", local_addr, hdr.getSrc(), ttl);
-                if(--ttl > 0) {
-                    Message copy=msg.copy(true, true)
-                      .setDest(next).setSrc(null).putHeader(getId(), new DaisyHeader(ttl, hdr.getSrc()));
-                    msgs_forwarded++;
-                    if(log.isTraceEnabled())
-                        log.trace("%s: forwarding message to %s with ttl=%d", local_addr, next, ttl);
-                    down_prot.down(copy);
-                }
+                    log.trace("%s: forwarding message to %s with src=%s", local_addr, next, hdr.getSrc());
+                down_prot.down(copy);
             }
         }
         up_prot.up(batch);
@@ -170,15 +167,11 @@ public class DAISYCHAIN extends Protocol {
 
         // Batch is all seen, should be on the right thread now (multicast, correct sender)
         if (batchSeen == 1) {
-//            for (Message msg : batch) {
-//                up2(msg);
-//            }
             upBatch(batch);
             return;
         }
 
         throw new RuntimeException("Daisychain batch shouldn't reach here");
-        // else handle normally
     }
 
     public int checkNeedRebatching(MessageBatch batch) {
@@ -187,8 +180,7 @@ public class DAISYCHAIN extends Protocol {
             DaisyHeader hdr=msg.getHeader(getId());
             if(hdr != null) {
                 hasDaisyMessages = true;
-                // Instead of seen, just check if any messages have sender different from batch sender
-                //if (!hdr.getSeen()) {
+                // Check if any messages have sender different from batch sender
                 if (msg.getDest() != null) {
                     return 2;
                 }
@@ -205,13 +197,10 @@ public class DAISYCHAIN extends Protocol {
         TpHeader tpheader = new TpHeader(batch.clusterName());
         for(Message msg: batch) {
             DaisyHeader hdr=msg.getHeader(getId());
-            //msg.setDest(null);
             if (hdr != null) {
-                //if (hdr.getSeen()) {
                 if (msg.getDest() == null) {
-                    System.out.println("WARNING: REBATCHED TWICE");
+                    log.warn("REBATCHED TWICE. SOMETHING WENT WRONG");
                 }
-                //hdr.setSeen(true);
                 msg.setDest(null);
                 msg.setSrc(hdr.getSrc());
             }
@@ -234,11 +223,9 @@ public class DAISYCHAIN extends Protocol {
                 continue;
 
             it.remove();
-            //if (hdr.getSeen()) {
             if (msg.getDest() == null) {
-                System.out.println("WARNING: REBATCHED TWICE");
+                log.warn("REBATCHED TWICE. SOMETHING WENT WRONG");
             }
-            //hdr.setSeen(true);
             msg.setDest(null);
             msg.setSrc(hdr.getSrc());
 
@@ -271,44 +258,35 @@ public class DAISYCHAIN extends Protocol {
 
 
     public static class DaisyHeader extends Header {
-        private short   ttl;
         private Address source;
-        private boolean seen = false;
 
         public DaisyHeader() {
         }
 
-        public DaisyHeader(short ttl, Address source) {
-            this.ttl=ttl;
+        public DaisyHeader(Address source) {
             this.source=source;
         }
 
         public short getMagicId()      {return 69;}
-        public short getTTL()          {return ttl;}
-        public void  setTTL(short ttl) {this.ttl=ttl;}
         public Address getSrc()          {return source;}
         public void  setSrc(Address source) {this.source=source;}
-        public boolean getSeen()          {return seen;}
-        public void  setSeen(boolean seen) {this.seen=seen;}
 
         public Supplier<? extends Header> create() {return DaisyHeader::new;}
 
-        @Override public int  serializedSize() {return Global.SHORT_SIZE + Util.size(source);}
+        @Override public int  serializedSize() {return Util.size(source);}
 
         @Override public void writeTo(DataOutput out) throws IOException {
-            out.writeShort(ttl);
             if(source != null)
                 Util.writeAddress(source, out);
         }
         @Override public void readFrom(DataInput in) throws IOException  {
-            ttl=in.readShort();
             try {
                 source=Util.readAddress(in);
             } catch (ClassNotFoundException e) {
                 e.printStackTrace();
             }
         }
-        public String toString() {return "ttl=" + ttl + " src=" + source;}
+        public String toString() {return "src=" + source;}
     }
 
 }
