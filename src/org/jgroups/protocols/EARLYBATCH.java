@@ -17,7 +17,6 @@ import java.io.DataInput;
 import java.io.DataOutput;
 import java.io.IOException;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.concurrent.Future;
 import java.util.concurrent.TimeUnit;
@@ -25,29 +24,23 @@ import java.util.concurrent.locks.ReentrantLock;
 import java.util.function.Supplier;
 
 /**
- * Implementation of daisy chaining. Multicast messages are sent to our neighbor, which sends them to its neighbor etc.
- * A TTL restricts the number of times a message is forwarded. The advantage of daisy chaining is that - for
- * point-to-point transports such as TCP - we can avoid the N-1 issue: when A sends a multicast message to 10
- * members, it needs to send it 9 times. With daisy chaining, it sends it 1 time, and in the next round, can already
- * send another message. This leads to much better throughput, see the ref in the JIRA.<p/>
- * Should be inserted just above MERGE3, in TCP based configurations.
- * JIRA: https://jira.jboss.org/browse/JGRP-1021
- * @author Bela Ban
- * @since 2.11
+ * Batches messages near the top of the stack.  This reduces the work done on the IO thread and reduces overhead,
+ * greatly increasing throughput for smaller message sizes (<1k in test configurations).  Also reduces the amount of
+ * header data by having one header for each batch.
+ * Conceptually, down messages are buffered then put in a wrapper message, so lower protocols only interact with the
+ * wrapper.  On the receiving end, the batch is unwrapped when it reaches this protocol and then forwarded to higher
+ * protocols as individual messages in a loop.
+ * @author Chris Johnson
+ * @since 5.x
  */
 @Experimental
 @MBean(description="Protocol just below flow control that wraps messages to improve throughput with small messages.")
 public class EARLYBATCH extends Protocol {
 
-    @Property(description="Loop back multicast messages")
-    boolean loopback=true;
-
     @ManagedAttribute(description="Local address")
     protected volatile Address       local_addr;
-    @ManagedAttribute(description="The member to which all multicasts are forwarded")
-    protected volatile Address       next;
-    @ManagedAttribute(description="The current view")
 
+    @ManagedAttribute(description="The current view")
     protected volatile View          view;
 
     @ManagedAttribute(type=AttributeType.SCALAR)
@@ -56,6 +49,8 @@ public class EARLYBATCH extends Protocol {
     public EarlyBatchHeader header = new EarlyBatchHeader();
 
     public static final int MAXBATCHSIZE = 100;
+    // EOFException if >60k
+    public static final int MAXBATCHBYTES = 50000;
     protected ConcurrentMap<Address, EarlyBatchBuffer> msgMap = Util.createConcurrentMap();
 
     protected final ReentrantLock lock=new ReentrantLock();
@@ -69,7 +64,7 @@ public class EARLYBATCH extends Protocol {
 
 
     public void init() throws Exception {
-        msgMap.putIfAbsent(nullAddress, new EarlyBatchBuffer(nullAddress, this));
+        msgMap.putIfAbsent(nullAddress, new EarlyBatchBuffer(nullAddress, this, MAXBATCHBYTES));
     }
 
     public void resetStats() {
@@ -106,7 +101,7 @@ public class EARLYBATCH extends Protocol {
     protected void handleViewChange(List<Address> mbrs) {
         if(mbrs == null) return;
 
-        mbrs.stream().filter(dest -> !msgMap.containsKey(dest)).forEach(dest -> msgMap.putIfAbsent(dest, new EarlyBatchBuffer(dest, this)));
+        mbrs.stream().filter(dest -> !msgMap.containsKey(dest)).forEach(dest -> msgMap.putIfAbsent(dest, new EarlyBatchBuffer(dest, this, MAXBATCHBYTES)));
 
         // remove members that left
         //msgMap.keySet().retainAll(mbrs);
@@ -235,12 +230,15 @@ public class EARLYBATCH extends Protocol {
         private int index;
         private EARLYBATCH ebprot;
         private boolean closed;
+        private long total_bytes;
+        private final long max_bytes;
 
-        protected EarlyBatchBuffer(Address address, EARLYBATCH ebprot) {
+        protected EarlyBatchBuffer(Address address, EARLYBATCH ebprot, long max_bytes) {
             this.dest=address;
             this.msgs = new Message[EARLYBATCH.MAXBATCHSIZE];
             this.index = 0;
             this.ebprot = ebprot;
+            this.max_bytes = max_bytes;
         }
 
         protected synchronized boolean addMessage(Message msg) {
@@ -248,7 +246,14 @@ public class EARLYBATCH extends Protocol {
                 return false;
             }
 
+            int msg_bytes = msg.size();
+            if((max_bytes > 0 && total_bytes + msg_bytes > max_bytes) ||
+                    total_bytes + msg_bytes > ebprot.getTransport().getMaxBundleSize()) {
+                sendBatch();
+            }
+
             msgs[index++] = msg;
+            total_bytes += msg_bytes;
             if (index == msgs.length) {
                 sendBatch();
             }
@@ -265,6 +270,7 @@ public class EARLYBATCH extends Protocol {
                 ebprot.getDownProtocol().down(msgs[0]);
                 msgs[0] = null;
                 index = 0;
+                total_bytes = 0;
                 return;
             }
 
@@ -275,6 +281,7 @@ public class EARLYBATCH extends Protocol {
             comp.setSrc(ebprot.local_addr);
             msgs = new Message[EARLYBATCH.MAXBATCHSIZE];
             index = 0;
+            total_bytes = 0;
             // Could send down out of synchronize, but that could make batches hit nakack out of order
             ebprot.getDownProtocol().down(comp);
         }
