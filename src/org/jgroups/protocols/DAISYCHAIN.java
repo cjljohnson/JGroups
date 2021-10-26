@@ -83,9 +83,11 @@ public class DAISYCHAIN extends Protocol {
         if(next == null) // view hasn't been received yet, use the normal transport
             return down_prot.down(msg);
 
+        // Must set source for header
+        if(msg.getSrc() == null && local_addr != null)
+            msg.setSrc(local_addr);
+
         if(loopback) {
-            if(msg.getSrc() == null && local_addr != null)
-                msg.setSrc(local_addr);
             if(log.isTraceEnabled())
                 log.trace("%s: looping back message %s", local_addr, msg);
             transport.loopback(msg, true);
