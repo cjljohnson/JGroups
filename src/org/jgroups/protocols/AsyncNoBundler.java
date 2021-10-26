@@ -38,7 +38,7 @@ public class AsyncNoBundler extends NoBundler {
                 sendSingleMessage(msg, out);
             }
             catch(Exception e) {
-                log.error("failed sending message", e);
+                log.trace("failed sending message", e);
             }
         };
         thread_pool.execute(async_send);
