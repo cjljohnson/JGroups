@@ -4,20 +4,11 @@ import org.jgroups.*;
 import org.jgroups.annotations.Experimental;
 import org.jgroups.annotations.MBean;
 import org.jgroups.annotations.ManagedAttribute;
-import org.jgroups.annotations.Property;
 import org.jgroups.conf.AttributeType;
 import org.jgroups.stack.Protocol;
-import org.jgroups.util.MessageBatch;
 import org.jgroups.util.Util;
 
-import java.io.DataInput;
-import java.io.DataOutput;
-import java.io.IOException;
-import java.util.HashMap;
-import java.util.Iterator;
-import java.util.Map;
 import java.util.Objects;
-import java.util.function.Supplier;
 
 /**
  * Implementation of daisy chaining. Multicast messages are sent to our neighbor, which sends them to its neighbor etc.
@@ -36,7 +27,6 @@ public class DAISY2 extends Protocol {
     @ManagedAttribute(description="The member to which all multicasts are forwarded")
     protected volatile Address       next;
     @ManagedAttribute(description="The current view")
-
     protected volatile View          view;
 
     @ManagedAttribute(type=AttributeType.SCALAR)
@@ -92,7 +82,7 @@ public class DAISY2 extends Protocol {
         if(msg.getDest() == null && next != null
                 && !(Objects.equals(next, msg.getSrc()) || Objects.equals(local_addr, msg.getSrc()))) {
             //System.out.println(msg);
-            // Set DONT_LOOPBACK to prevent and infinite loopback loop.
+            // Set DONT_LOOPBACK to prevent an infinite loopback loop.
             // This will cause messages with a different source from their true source to be looped back twice
             // but that is rare and reliability layer should catch it.
             msg.setFlag(Message.TransientFlag.DONT_LOOPBACK);
@@ -105,11 +95,6 @@ public class DAISY2 extends Protocol {
 
         return up_prot.up(msg);
     }
-
-
-//    public void up(MessageBatch batch) {
-//
-//    }
 
 
     protected void handleView(View view) {
