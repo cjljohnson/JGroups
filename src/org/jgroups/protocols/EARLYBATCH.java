@@ -4,11 +4,8 @@ import org.jgroups.*;
 import org.jgroups.annotations.Experimental;
 import org.jgroups.annotations.MBean;
 import org.jgroups.annotations.ManagedAttribute;
-import org.jgroups.annotations.Property;
 import org.jgroups.conf.AttributeType;
-import org.jgroups.protocols.pbcast.NAKACK2;
 import org.jgroups.stack.Protocol;
-import org.jgroups.util.AckChecker;
 import org.jgroups.util.MessageBatch;
 import org.jgroups.util.TimeScheduler;
 import org.jgroups.util.Util;
@@ -48,8 +45,10 @@ public class EARLYBATCH extends Protocol {
 
     public EarlyBatchHeader header = new EarlyBatchHeader();
 
+    @ManagedAttribute(description="The maximum number of messages per batch")
     public static final int MAXBATCHSIZE = 100;
     // EOFException if >60k
+    @ManagedAttribute(description="The maximum number of bytes per batch")
     public static final int MAXBATCHBYTES = 50000;
     protected ConcurrentMap<Address, EarlyBatchBuffer> msgMap = Util.createConcurrentMap();
 
