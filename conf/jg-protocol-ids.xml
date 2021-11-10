@@ -63,6 +63,7 @@
     <class id="72" name="org.jgroups.protocols.VERIFY_SUSPECT2"/>
     <class id="73" name="org.jgroups.protocols.EARLYBATCH"/>
     <class id="74" name="org.jgroups.protocols.DAISY2"/>
+    <class id="75" name="org.jgroups.protocols.SEQUENCER_DAISY"/>
 
 
     <!-- IDs reserved for building blocks -->

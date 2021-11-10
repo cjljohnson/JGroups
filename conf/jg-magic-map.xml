@@ -59,5 +59,7 @@
     <class id="93"  name="org.jgroups.protocols.FD_SOCK2$FdHeader"/>
     <class id="94"  name="org.jgroups.protocols.VERIFY_SUSPECT2$VerifyHeader"/>
     <class id="95"  name="org.jgroups.protocols.EARLYBATCH$EarlyBatchHeader"/>
+    <class id="96"  name="org.jgroups.protocols.SEQUENCER_DAISY$SequencerHeader"/>
+    <class id="97"  name="org.jgroups.protocols.SEQUENCER_DAISY$MessageOrder"/>
 </magic-number-class-mapping>
 
